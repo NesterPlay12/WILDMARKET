@@ -1,0 +1,13 @@
+{
+  "db_host": "127.0.0.1",
+  "db_port": 5432,
+  "db_name": "wildmarket_local",
+  "db_user": "postgres",
+  "db_password": "",
+  "db_schema": "wildmarket",
+  "google_oauth_enabled": false,
+  "google_client_id": "",
+  "google_client_secret": "",
+  "google_redirect_uri": "http://127.0.0.1:8000/auth/google/callback",
+  "yandex_maps_api_key": ""
+}

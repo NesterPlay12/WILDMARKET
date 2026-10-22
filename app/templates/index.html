@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+{% block title %}Главная{% endblock %}
+{% block content %}
+
+<div class="hero-banner">
+    <div class="hero-copy">
+        <p class="hero-eyebrow">Каталог товаров · Заказ онлайн</p>
+        <h1>Всё что нужно — <br class="d-none d-md-inline">здесь и сейчас</h1>
+        <p class="hero-description">Выбирайте товары и следите за статусом заказа в личном кабинете</p>
+    </div>
+    <a href="{{ url_for('main.search') }}" class="hero-action btn btn-warning fw-bold">
+        <span class="d-none d-md-inline">Смотреть все товары</span>
+        <span class="d-md-none">В каталог</span>
+        <i class="bi bi-arrow-right ms-2" aria-hidden="true"></i>
+    </a>
+</div>
+
+{% if featured %}
+<div class="section-header">
+    <h2>Популярные товары</h2>
+    <a href="{{ url_for('main.search', sort='popular') }}" class="btn btn-outline-secondary btn-sm">Смотреть все</a>
+</div>
+<div class="row row-cols-2 row-cols-md-3 row-cols-lg-4 row-cols-xl-6 g-3 mb-5">
+    {% for product in featured %}
+    <div class="col">
+        {% include '_product_card.html' %}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{% if new_arrivals %}
+<div class="section-header">
+    <h2>Новинки</h2>
+    <a href="{{ url_for('main.search', sort='new') }}" class="btn btn-outline-secondary btn-sm">Смотреть все</a>
+</div>
+<div class="row row-cols-2 row-cols-md-3 row-cols-lg-4 row-cols-xl-6 g-3 mb-4">
+    {% for product in new_arrivals %}
+    <div class="col">
+        {% include '_product_card.html' %}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{% endblock %}
