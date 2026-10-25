@@ -1,0 +1,286 @@
+{% extends 'base.html' %}
+{% block title %}Оформление заказа{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* ── Интерфейс выбора ПВЗ в стиле маркетплейса ── */
+  #pvz-map { height: 520px; width: 100%; }
+  #pvz-map-wrap { display: none; }
+  #pvz-list {
+    width: 290px; min-width: 290px; height: 520px;
+    overflow-y: auto; background: #161616; padding: 10px 8px;
+    color: #fff;
+  }
+  #pvz-list::-webkit-scrollbar { width: 5px; }
+  #pvz-list::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
+  #pvz-map-col { flex: 1; min-width: 0; }
+  .pvz-list-item { cursor: pointer; border: 1px solid transparent !important;
+                   border-radius: 6px; padding: 11px 10px !important;
+                   transition: background .15s; }
+  .pvz-list-item:hover, .pvz-list-item--active { background: #292929 !important;
+                            border-color: #484848 !important; }
+  .pvz-list-item .pvz-address { color: #d4d4d4; }
+  .pvz-list-item .pvz-meta { color: #989898; font-size: 11px; }
+  .pvz-list-item .pvz-star { color: #ffc400; }
+  .pvz-map-search { position:absolute; z-index:401; top:12px; left:12px; width:min(330px, calc(100% - 24px)); }
+  .pvz-map-search input { box-shadow:0 2px 10px rgba(0,0,0,.18); border:0; }
+  .pvz-map-overlay { position:relative; }
+  .pvz-map-legend { position:absolute; z-index:401; left:12px; bottom:12px;
+                    background:#fff; border-radius:8px; padding:8px 10px;
+                    box-shadow:0 2px 10px rgba(0,0,0,.16); font-size:11px; }
+  #pvz-spinner { display: none; align-items: center; justify-content: center;
+                 height: 120px; gap: 10px; color: #aaa; background:#161616; }
+  /* ── Тип доставки ── */
+  .delivery-option { cursor: pointer; transition: border-color .15s, background .15s; }
+  .delivery-option:has(input:checked) { border-color: #cb11ab !important; background: #fdf0fb; }
+  /* ── Выбранный ПВЗ ── */
+  #selected-pvz-card { display: none; }
+  @media (max-width: 640px) {
+    #pvz-map-wrap { flex-direction: column !important; }
+    #pvz-list { width: 100%; min-width: unset; height: 220px; order:2; }
+    #pvz-map { height: 320px; }
+    .pvz-map-legend { bottom: 8px; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2 class="h4 fw-bold mb-4">Оформление заказа</h2>
+
+{# Единая форма — охватывает всё, включая скрытые поля пикапа #}
+<form method="post" id="checkout-form">
+  {% include '_csrf_field.html' %}
+  <input type="hidden" name="payment_method" value="cash_on_delivery">
+  <input type="hidden" name="pvz_provider" id="pvz-provider">
+  <input type="hidden" name="pvz_id" id="pvz-id">
+  <input type="hidden" name="pvz_city" id="pvz-city-selected">
+
+  {# Скрытый итоговый адрес — JS заполняет перед сабмитом #}
+  <input type="hidden" name="address" id="final-address">
+  <input type="hidden" name="phone"   id="final-phone"   value="{{ current_user.phone or '' }}">
+  <input type="hidden" name="comment" id="final-comment" value="">
+
+<div class="row g-4">
+
+  {# ═══════════════ Левая колонка ═══════════════ #}
+  <div class="col-lg-7">
+
+    {# ── Способ доставки ── #}
+    <div class="bg-white rounded-3 p-4 shadow-sm mb-4">
+      <h5 class="fw-bold mb-3"><i class="bi bi-truck me-2 text-wb"></i>Способ доставки</h5>
+      <div class="d-flex gap-3 flex-wrap">
+        <label class="delivery-option flex-grow-1 d-flex align-items-center gap-3 p-3 border rounded-3">
+          <input class="form-check-input mt-0 flex-shrink-0" type="radio"
+                 name="delivery_type" value="courier" checked>
+          <div>
+            <div class="fw-semibold"><i class="bi bi-house-door me-1"></i>Курьерская доставка</div>
+            <div class="small text-muted">Адрес для обработки заказа продавцом</div>
+          </div>
+        </label>
+        <label class="delivery-option flex-grow-1 d-flex align-items-center gap-3 p-3 border rounded-3">
+          <input class="form-check-input mt-0 flex-shrink-0" type="radio"
+                 name="delivery_type" value="pickup">
+          <div>
+            <div class="fw-semibold"><span class="me-1">📦</span>Самовывоз из ПВЗ</div>
+            <div class="small text-muted">{{ 'Просмотр адресов на карте' if delivery_demo_mode else 'СДЭК или Почта России' }}</div>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    {# ── Курьерская доставка ── #}
+    <div id="section-courier" class="bg-white rounded-3 p-4 shadow-sm mb-4">
+      <h5 class="fw-bold mb-3"><i class="bi bi-geo-alt me-2 text-wb"></i>Адрес доставки</h5>
+      <div class="mb-3">
+        <label class="form-label" for="courier-address">Адрес <span class="text-danger">*</span></label>
+        <textarea class="form-control" id="courier-address" rows="2"
+                  placeholder="Город, улица, дом, квартира">{{ current_user.address or '' }}</textarea>
+      </div>
+    </div>
+
+    {# ── Самовывоз из ПВЗ ── #}
+    <div id="section-pickup" class="bg-white rounded-3 p-4 shadow-sm mb-4" style="display:none">
+      <h5 class="fw-bold mb-3"><i class="bi bi-shop me-2 text-wb"></i>Выберите пункт выдачи</h5>
+      {% if not delivery_demo_mode %}
+      {# Официальный каталог оператора по-прежнему требует город. #}
+      <div class="d-flex gap-2 mb-3">
+        <div class="flex-grow-1">
+          <input type="text" class="form-control" id="pvz-city"
+                 value="Москва" aria-label="Город пункта выдачи"
+                 placeholder="Введите город, например: Москва"
+                 list="city-suggestions">
+          <datalist id="city-suggestions">
+            <option value="Москва"><option value="Санкт-Петербург">
+            <option value="Новосибирск"><option value="Екатеринбург">
+            <option value="Казань"><option value="Нижний Новгород">
+            <option value="Красноярск"><option value="Краснодар">
+            <option value="Омск"><option value="Самара">
+            <option value="Ростов-на-Дону"><option value="Уфа">
+            <option value="Волгоград"><option value="Пермь"><option value="Воронеж">
+          </datalist>
+        </div>
+        <button class="btn btn-wb px-4 fw-semibold" type="button" id="btn-search-pvz">
+          <i class="bi bi-search me-1"></i>Найти
+        </button>
+      </div>
+
+      <div class="small text-muted mb-3">
+        Для одноимённых населённых пунктов укажите «Город, регион», например «Мирный, Архангельская область».
+        Адреса доступны только при подключённом официальном каталоге оператора.
+      </div>
+      {% endif %}
+      {# Фильтр провайдеров #}
+      <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+        <button type="button" class="btn btn-wb btn-sm active" data-pvz-provider="all">Все</button>
+        {% if delivery_demo_mode %}
+        <span class="small text-muted">Все добавленные адреса</span>
+        <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-reload-pvz" aria-label="Обновить адреса на карте">
+          <i class="bi bi-arrow-clockwise" aria-hidden="true"></i> Обновить
+        </button>
+        {% else %}
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-pvz-provider="cdek">
+          <span style="color:#f97316;font-weight:700">●</span> СДЭК
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-pvz-provider="pochta">
+          <span style="color:#3b82f6;font-weight:700">●</span> Почта России
+        </button>
+        {% endif %}
+        <span class="ms-auto small text-muted" id="pvz-count"></span>
+      </div>
+
+      {# Спиннер #}
+      <div id="pvz-spinner">
+        <div class="spinner-border spinner-border-sm text-wb"></div>
+        <span>Загружаем пункты выдачи…</span>
+      </div>
+
+      {# Карта + список #}
+      <div id="pvz-map-wrap" class="d-flex rounded-3 overflow-hidden border">
+        <div id="pvz-list"></div>
+        <div id="pvz-map-col" class="pvz-map-overlay">
+          <div class="pvz-map-search">
+            <input class="form-control" id="pvz-map-search" type="search"
+                   placeholder="Поиск мест и адресов">
+          </div>
+           <div id="pvz-map" data-catalog-scope="{{ 'all' if delivery_demo_mode else 'city' }}"></div>
+          <div class="pvz-map-legend">
+            {% if delivery_demo_mode %}
+             <b style="color:#cb11ab">●</b> Адреса WildMarket
+            {% else %}
+            <span class="me-2"><b style="color:#ff7a00">●</b> СДЭК</span>
+            <span><b style="color:#a700ff">●</b> Почта России</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      <div id="pvz-status" class="alert alert-info mt-3 mb-0" role="status" hidden></div>
+      {% if delivery_demo_mode %}
+      <div class="small text-muted mt-2">
+        Адреса и координаты: <a href="https://www.openstreetmap.org/copyright"
+        target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors, ODbL</a>.
+         Перемещайте карту или ищите город и адрес. Точки видны везде, где они добавлены.
+      </div>
+      {% endif %}
+
+      {# Карточка выбранного ПВЗ #}
+      <div id="selected-pvz-card" class="mt-3 p-3 rounded-3 border border-2"
+           style="border-color:#cb11ab !important; background:#fdf0fb;"></div>
+
+      {# Поле-отображение адреса ПВЗ (только для чтения) #}
+      <input type="text" class="form-control mt-3" id="pvz-address-display" readonly
+             placeholder="Адрес ПВЗ подставится после выбора на карте"
+             style="background:#f8f9fa;cursor:default">
+    </div>
+
+    <div id="checkout-contact" class="bg-white rounded-3 p-4 shadow-sm mb-4">
+      <h5 class="fw-bold mb-3">Контактные данные</h5>
+      <div class="mb-3">
+        <label class="form-label" for="courier-phone">Телефон <span class="text-danger">*</span></label>
+        <input type="tel" class="form-control" id="courier-phone" required maxlength="20"
+               autocomplete="tel" value="{{ current_user.phone or '' }}"
+               placeholder="+7 (999) 999-99-99">
+      </div>
+      <div>
+        <label class="form-label" for="courier-comment">Комментарий к заказу</label>
+        <textarea class="form-control" id="courier-comment" rows="2" maxlength="2000"
+                  placeholder="Дополнительная информация к заказу"></textarea>
+      </div>
+    </div>
+
+    {# ── Оплата ── #}
+    <div class="bg-white rounded-3 p-4 shadow-sm">
+      <h5 class="fw-bold mb-3"><i class="bi bi-credit-card me-2 text-wb"></i>Способ оплаты</h5>
+      <div class="d-flex flex-column gap-2">
+        <div class="form-check p-3 border rounded-3">
+          <input class="form-check-input" type="radio" id="pay-on-delivery"
+                 value="cash_on_delivery" checked disabled>
+          <label class="form-check-label fw-semibold" for="pay-on-delivery">
+            <i class="bi bi-cash me-2"></i>Оплата при получении
+          </label>
+        </div>
+      </div>
+    </div>
+
+  </div>{# /col-lg-7 #}
+
+  {# ═══════════════ Правая колонка — итог ═══════════════ #}
+  <div class="col-lg-5">
+    <div class="bg-white rounded-3 p-4 shadow-sm sticky-top" style="top:70px">
+      <h5 class="fw-bold mb-3">Ваш заказ</h5>
+      {% for item in items %}{% if item.product %}
+      <div class="d-flex gap-2 mb-2 align-items-center">
+        <img src="{{ item.product.image_url or url_for('static', filename='images/product-placeholder.svg') }}"
+             style="width:48px;height:48px;object-fit:cover;border-radius:6px;">
+        <div class="flex-grow-1">
+          <div class="small fw-semibold text-truncate" style="max-width:180px">{{ item.product.name }}</div>
+          <div class="small text-muted">{{ item.quantity }} шт.</div>
+          {% if item.selected_color or item.selected_size %}
+          <div class="small text-muted">
+            {% if item.selected_color %}{{ item.selected_color }}{% endif %}
+            {% if item.selected_size %} · {{ item.selected_size }}{% endif %}
+          </div>
+          {% endif %}
+        </div>
+        <div class="fw-semibold small text-nowrap">
+          {{ "{:,.0f}".format(item.product.price * item.quantity) }} ₽
+        </div>
+      </div>
+      {% endif %}{% endfor %}
+      <hr>
+      <div class="d-flex justify-content-between mb-1">
+        <span class="text-muted">Товары</span>
+        <span>{{ "{:,.0f}".format(total) }} ₽</span>
+      </div>
+      <div class="d-flex justify-content-between mb-1">
+        <span class="text-muted">Доставка</span>
+        <span id="delivery-cost"
+              data-origin-city="{{ pickup_delivery_pricing.origin_city }}"
+              data-origin-lat="{{ pickup_delivery_pricing.origin_lat }}"
+              data-origin-lng="{{ pickup_delivery_pricing.origin_lng }}"
+              data-base-fee="{{ pickup_delivery_pricing.base_fee_rub }}"
+              data-per-km="{{ pickup_delivery_pricing.per_km_rub }}">—</span>
+      </div>
+      <div id="delivery-distance" class="small text-muted mb-2"></div>
+      <hr>
+      <div class="d-flex justify-content-between fw-bold fs-5 mb-4">
+        <span>К оплате</span>
+        <span id="checkout-total" class="text-wb" data-items-total="{{ total }}">{{ "{:,.0f}".format(total) }} ₽</span>
+      </div>
+      <button type="submit" class="btn btn-wb w-100 btn-lg fw-bold">
+        <i class="bi bi-bag-check me-2"></i>Подтвердить заказ
+      </button>
+      <p class="small text-muted mt-3 mb-0">
+        Подтверждение сохраняет заказ только в WildMarket, но не создаёт отправление у перевозчика.
+        Для самовывоза стоимость рассчитывается по расстоянию от Новомосковска; условия курьерской доставки подтверждаются отдельно.
+      </p>
+    </div>
+  </div>
+
+</div>{# /row #}
+</form>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU{% if yandex_maps_api_key %}&apikey={{ yandex_maps_api_key }}{% endif %}"></script>
+<script src="{{ url_for('static', filename='js/delivery-map.js') }}"></script>
+{% endblock %}
